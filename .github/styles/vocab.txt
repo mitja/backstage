@@ -85,6 +85,7 @@ Fargate
 Figma
 Firekube
 Fiverr
+ga
 gitbeaker
 GitHub
 GitLab

@@ -63,12 +63,10 @@ const getEntityRootDir = (entity: Entity) => {
 };
 
 const logger = getVoidLogger();
-jest.spyOn(logger, 'info').mockReturnValue(logger);
+const loggerInfoSpy = jest.spyOn(logger, 'info').mockReturnValue(logger);
+const loggerErrorSpy = jest.spyOn(logger, 'error').mockReturnValue(logger);
 
-let publisher: PublisherBase;
-
-beforeEach(async () => {
-  mockFs.restore();
+const createPublisherMock = async (bucketName: string) => {
   const mockConfig = new ConfigReader({
     techdocs: {
       requestUrl: 'http://localhost:7000',
@@ -76,13 +74,19 @@ beforeEach(async () => {
         type: 'googleGcs',
         googleGcs: {
           credentials: '{}',
-          bucketName: 'bucketName',
+          bucketName,
         },
       },
     },
   });
+  return await GoogleGCSPublish.fromConfig(mockConfig, logger);
+};
 
-  publisher = await GoogleGCSPublish.fromConfig(mockConfig, logger);
+let publisher: PublisherBase;
+
+beforeEach(async () => {
+  mockFs.restore();
+  publisher = await createPublisherMock('bucketName');
 });
 
 describe('GoogleGCSPublish', () => {
@@ -94,20 +98,7 @@ describe('GoogleGCSPublish', () => {
     });
 
     it('should reject incorrect config', async () => {
-      const mockConfig = new ConfigReader({
-        techdocs: {
-          requestUrl: 'http://localhost:7000',
-          publisher: {
-            type: 'googleGcs',
-            googleGcs: {
-              credentials: '{}',
-              bucketName: 'errorBucket',
-            },
-          },
-        },
-      });
-
-      const errorPublisher = GoogleGCSPublish.fromConfig(mockConfig, logger);
+      const errorPublisher = await createPublisherMock('errorBucket');
 
       expect(await errorPublisher.getReadiness()).toEqual({
         isAvailable: false,
@@ -182,6 +173,42 @@ describe('GoogleGCSPublish', () => {
         message: expect.stringContaining(wrongPathToGeneratedDirectory),
       });
 
+      mockFs.restore();
+    });
+
+    it('should remove stale files after upload', async () => {
+      publisher = await createPublisherMock('delete_stale_files_success');
+      const entity = createMockEntity();
+      const entityRootDir = getEntityRootDir(entity);
+
+      expect(
+        await publisher.publish({
+          entity,
+          directory: entityRootDir,
+        }),
+      ).toBeUndefined();
+
+      expect(loggerInfoSpy).toHaveBeenLastCalledWith(
+        'Successfully deleted stale files for Entity test-component-name. Total number of files: 1',
+      );
+      mockFs.restore();
+    });
+
+    it('should log error when removing stale files', async () => {
+      publisher = await createPublisherMock('delete_stale_files_error');
+      const entity = createMockEntity();
+      const entityRootDir = getEntityRootDir(entity);
+
+      expect(
+        await publisher.publish({
+          entity,
+          directory: entityRootDir,
+        }),
+      ).toBeUndefined();
+
+      expect(loggerErrorSpy).toHaveBeenLastCalledWith(
+        'Unable to delete file(s) from Google Cloud Storage. Error: Message',
+      );
       mockFs.restore();
     });
   });
